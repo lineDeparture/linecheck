@@ -3,7 +3,7 @@ import numpy as np
 from ultralytics import YOLO
 
 # === 사용자 설정 ===
-video_path = r"C:\Users\USER\Downloads\3team3-best\sample2.mp4"  # 영상 경로
+video_path = r"C:\Users\USER\Downloads\3team3-best\harder_challenge_video.mp4"  # 영상 경로
 model_path = r"C:\Users\USER\Downloads\3team3-best\best.pt"      # YOLO 모델 경로
 
 # === Kalman Filter (차선 중심 x좌표 예측용) ===
