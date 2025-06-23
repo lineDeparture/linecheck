@@ -96,8 +96,8 @@ import cv2 as cv
 import numpy as np
 # from ultralytics import YOLO  # ← YOLO 사용 안 하므로 주석 처리
 # === 사용자 설정 ===
-video_path = r"C:\Users\USER\Downloads\3team3-best\sample2.mp4"  # 영상 경로
-model_path = r"C:\Users\USER\Downloads\3team3-best\best.pt"      # YOLO 모델 경로
+video_path = r"sample2.mp4"  # 영상 경로
+model_path = r"best.pt"      # YOLO 모델 경로
 
 # === Kalman Filter (차선 중심 x좌표 예측용) ===
 lane_kalman = cv.KalmanFilter(2, 1)
