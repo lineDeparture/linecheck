@@ -85,7 +85,7 @@ class LaneTracker:
         # ▶ ROI 마스킹: 잘못된 영역 제거
         mask = np.ones_like(warped_img, dtype=np.uint8) * 255
         height, width = warped_img.shape
-        cv2.rectangle(mask, (0, height - 0), (600, height), 0, -1)
+        cv2.rectangle(mask, (0, height - 0), (width, height), 0, -1)
         warped_img = cv2.bitwise_and(warped_img, mask)
 
         # ▶ 모폴로지 연산으로 노이즈 제거
@@ -197,7 +197,7 @@ class LaneTracker:
 
         # ROI 마스킹
         mask = np.ones_like(warped_img, dtype=np.uint8) * 255
-        cv2.rectangle(mask, (0, height - 0), (600, height), 0, -1)
+        cv2.rectangle(mask, (0, height - 0), (width, height), 0, -1)
         warped_img = cv2.bitwise_and(warped_img, mask)
 
         # 모폴로지 연산
