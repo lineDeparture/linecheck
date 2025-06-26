@@ -2,7 +2,7 @@
 
 
 # Imports
-import cv2
+import cv2 as cv
 from matplotlib import pyplot as plt
 import numpy as np
 import time
@@ -17,16 +17,16 @@ dst = np.array([[300, 0], [980, 0], [980, 720], [300, 720]], np.float32)
 # Convert image to yellow and white color space
 def color_space(img):
     # Convert image to HSV
-    img_hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    img_hsv = cv.cvtColor(img, cv.COLOR_BGR2HSV)
     # Colorspace "yellow" in HSV: (15-40, 80-255, 160-255)
-    mask_yellow = cv2.inRange(img_hsv, (15, 100, 160), (40, 255, 255))
+    mask_yellow = cv.inRange(img_hsv, (15, 100, 160), (40, 255, 255))
     # Colorspace "white" in HSV: (0-255, 0-20, 200-255)
-    mask_white = cv2.inRange(img_hsv, (0, 0, 200), (255, 70, 255))
+    mask_white = cv.inRange(img_hsv, (0, 0, 200), (255, 70, 255))
     # Merge white and yellow masks
-    masks = cv2.bitwise_or(mask_yellow, mask_white)
+    masks = cv.bitwise_or(mask_yellow, mask_white)
     # Return image in gray
     
-    return cv2.cvtColor(cv2.bitwise_and(img, img, mask=masks), cv2.COLOR_BGR2GRAY)
+    return cv.cvtColor(cv.bitwise_and(img, img, mask=masks), cv.COLOR_BGR2GRAY)
 
 
 import numpy as np
@@ -45,20 +45,53 @@ class LaneTracker:
         self.prev_left_fit = None
         self.prev_right_fit = None
 
-    def should_reset(self, warped_img):
-        if self.prev_left_fit is None or self.prev_right_fit is None:
+    #다항식 리셋용
+    #후술할 추적 방식에 리셋시 필요할 경우를 위해 왼쪽 차선이 오른쪽 차선과 교차하면 리셋되게 만듦
+    def should_reset(self, left_fit, right_fit, warped_img):
+        if left_fit is None or right_fit is None:
+            #print("차선 인식 안됨")
             return True
 
-
         ploty = np.linspace(0, warped_img.shape[0]-1, warped_img.shape[0])
-        left_fitx = np.polyval(self.prev_left_fit, ploty)
-        right_fitx = np.polyval(self.prev_right_fit, ploty)
+        left_fitx = np.polyval(left_fit, ploty)
+        right_fitx = np.polyval(right_fit, ploty)
+
+        
+        y_eval = np.max(ploty)  # 가장 아래 지점에서의 곡률 평가
+        threshold = 2000
+        def calc_curvature(fit):
+            A = fit[0]
+            B = fit[1]
+            return ((1 + (2*A*y_eval + B)**2)**1.5) / np.abs(2*A)
+
+        left_curve = calc_curvature(left_fit)
+        right_curve = calc_curvature(right_fit)
+
+        #diff = np.abs(left_curve - right_curve)
+
+
+        curvature_ratio = max(left_curve, right_curve) / min(left_curve, right_curve)
+        curvature_diff = abs(left_curve - right_curve)
+        """
+        if abs(self.prev_left_fit[0]) > 5.0e-04 and abs(self.prev_right_fit[0]) > 5.0e-04:
+            if curvature_ratio > 2.5 and np.sign(self.prev_left_fit[0]) != np.sign(self.prev_right_fit[0]):
+                return True
+        """
+        """
+        if curvature_diff > threshold and abs(self.prev_left_fit[0]) > 1.0e-03 and abs(self.prev_right_fit[0]) > 1.0e-03:
+            return True
+            """
+
+        if abs(left_fit[0] - right_fit[0]) > 5.0e-03:
+            return True
+        
 
         # 1. 좌우 교차 판단
-        if np.any(left_fitx > right_fitx):
+        if np.any(left_fitx >= right_fitx):
             return True
 
         # 2. 거리 기반 판단
+        #영상별로 차선간 거리가 달라져서 쓰기에는 힘들것으로 보임
         """
         lane_width = right_fitx - left_fitx
         if np.any(lane_width < 200) or np.any(lane_width > 800):
@@ -71,26 +104,46 @@ class LaneTracker:
         #     return True
 
     def update(self, warped_img, draw=True):
-        if self.should_reset(warped_img):
-            result = self.sliding_windows_visual(warped_img, draw)
+        if self.should_reset(self.prev_left_fit, self.prev_right_fit, warped_img):
+            #result = self.sliding_windows_visual(warped_img, draw)
+            """
+            if self.dummy is not None:
+                plt.imshow(cv.cvtColor(self.dummy, cv.COLOR_BGR2RGB))
+                plt.show()
+            """
+            result = self.sliding_windows_visual_central(warped_img, draw)
         else:
             result = self.quick_search(warped_img, draw)
 
+        if self.should_reset(result["left"]["fit"], result["right"]["fit"], warped_img):
+            self.reset_F = True
+            result["left"]["fit"] = None
+            result["right"]["fit"] = None
+        else:
+            self.reset_F = False
         # 상태 갱신
         self.prev_left_fit = result["left"]["fit"]
         self.prev_right_fit = result["right"]["fit"]
+        self.dummy = result["image"]
         return result
-
+    #sliding window
     def sliding_windows_visual(self, warped_img, draw):
         # ▶ ROI 마스킹: 잘못된 영역 제거
         mask = np.ones_like(warped_img, dtype=np.uint8) * 255
         height, width = warped_img.shape
-        cv2.rectangle(mask, (0, height - 0), (width, height), 0, -1)
-        warped_img = cv2.bitwise_and(warped_img, mask)
+        cv.rectangle(mask, (0, height - 20), (width, height), 0, -1)
 
+        
+        warped_img = cv.bitwise_and(warped_img, mask)
+
+        
+        """
+        plt.imshow(cv.cvtColor(warped_img, cv.COLOR_BGR2RGB))
+        plt.show()
+        """
         # ▶ 모폴로지 연산으로 노이즈 제거
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
-        warped_img = cv2.morphologyEx(warped_img, cv2.MORPH_OPEN, kernel)
+        kernel = cv.getStructuringElement(cv.MORPH_RECT, (5, 5))
+        warped_img = cv.morphologyEx(warped_img, cv.MORPH_OPEN, kernel)
 
         # ▶ 시각화용 이미지 생성
         out_img = np.dstack((warped_img, warped_img, warped_img)) * 255
@@ -100,7 +153,11 @@ class LaneTracker:
         midpoint = histogram.shape[0] // 2
         leftx_base = np.argmax(histogram[:midpoint])
         rightx_base = np.argmax(histogram[midpoint:]) + midpoint
-
+        """
+        plt.plot(histogram)
+        plt.title("Lane pixel histogram (bottom half)")
+        plt.show()
+        """
         # ▶ 슬라이딩 윈도우 초기화
         window_height = warped_img.shape[0] // self.nwindows
         nonzero = warped_img.nonzero()
@@ -123,8 +180,8 @@ class LaneTracker:
             win_xright_high = rightx_current + self.margin
 
             if draw:
-                cv2.rectangle(out_img, (win_xleft_low, win_y_low), (win_xleft_high, win_y_high), (0,255,0), 2)
-                cv2.rectangle(out_img, (win_xright_low, win_y_low), (win_xright_high, win_y_high), (0,255,255), 2)
+                cv.rectangle(out_img, (win_xleft_low, win_y_low), (win_xleft_high, win_y_high), (0,255,0), 2)
+                cv.rectangle(out_img, (win_xright_low, win_y_low), (win_xright_high, win_y_high), (0,255,255), 2)
 
             good_left_inds = ((nonzeroy >= win_y_low) & (nonzeroy < win_y_high) &
                             (nonzerox >= win_xleft_low) & (nonzerox < win_xleft_high)).nonzero()[0]
@@ -163,8 +220,8 @@ class LaneTracker:
             righty = righty[mask]
 
         # ▶ 픽셀 색상 표시
-        out_img[lefty, leftx] = [255, 0, 0]
-        out_img[righty, rightx] = [0, 0, 255]
+        out_img[lefty, leftx] = [100, 0, 0]
+        out_img[righty, rightx] = [0, 0, 100]
 
         # ▶ 보간 곡선 시각화
         if draw:
@@ -172,12 +229,11 @@ class LaneTracker:
             if left_fit is not None:
                 left_fitx = np.polyval(left_fit, ploty)
                 for i in range(len(ploty)-1):
-                    cv2.line(out_img, (int(left_fitx[i]), int(ploty[i])), (int(left_fitx[i+1]), int(ploty[i+1])), (255, 255, 0), 2)
+                    cv.line(out_img, (int(left_fitx[i]), int(ploty[i])), (int(left_fitx[i+1]), int(ploty[i+1])), (255, 255, 0), 2)
             if right_fit is not None:
                 right_fitx = np.polyval(right_fit, ploty)
                 for i in range(len(ploty)-1):
-                    cv2.line(out_img, (int(right_fitx[i]), int(ploty[i])), (int(right_fitx[i+1]), int(ploty[i+1])), (0, 255, 255), 2)
-
+                    cv.line(out_img, (int(right_fitx[i]), int(ploty[i])), (int(right_fitx[i+1]), int(ploty[i+1])), (0, 255, 255), 2)
         return {
             "image": out_img,
             "left": {
@@ -191,28 +247,69 @@ class LaneTracker:
                 "y": righty,
             }
         }
-    #슬라이딩 윈도우 
-    def sliding_windows_visual_central(self, warped_img, draw):
+    #sliding window 중앙 기준으로
+    #기본은 화면 끝에서부터 측정해서 멀리있는 차선이 인식되거나 할 경우 있음
+    #중앙 기준의 경우 커브가 있어 중앙을 넘거나 중앙에 교통 마크가 있으면 문제 발생 가능성 있음
+    def sliding_windows_visual_central(self, warped_img_ori, draw):
+
+        warped_img = warped_img_ori.copy()
         height, width = warped_img.shape
 
         # ROI 마스킹
         mask = np.ones_like(warped_img, dtype=np.uint8) * 255
-        cv2.rectangle(mask, (0, height - 0), (width, height), 0, -1)
-        warped_img = cv2.bitwise_and(warped_img, mask)
-
+        cv.rectangle(mask, (0, height - 50), (width, height), 0, -1)
+        warped_img = cv.bitwise_and(warped_img, mask)
+        """
+        plt.imshow(cv.cvtColor(warped_img, cv.COLOR_BGR2RGB))
+        plt.show()
+        """
         # 모폴로지 연산
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
-        warped_img = cv2.morphologyEx(warped_img, cv2.MORPH_OPEN, kernel)
+        kernel = cv.getStructuringElement(cv.MORPH_RECT, (5, 5))
+        warped_img = cv.morphologyEx(warped_img, cv.MORPH_OPEN, kernel)
 
         out_img = np.dstack((warped_img, warped_img, warped_img)) * 255
 
         # 중앙 기준 peak 검출
-        histogram = np.sum(warped_img[height // 2:, :], axis=0)
+        histogram = np.sum(warped_img[height - height // 3:, :], axis=0)
         midpoint = width // 2
-        central_peak = np.argmax(histogram[midpoint - 100: midpoint + 100]) + (midpoint - 100)
-        leftx_current = central_peak - self.margin
-        rightx_current = central_peak + self.margin
+        threshold = 10000
+        leftx_current = None
+        rightx_current = None
+        for i in range(midpoint, 0, -1):
+            if histogram[i] > threshold:
+                leftx_current = i
+                break
 
+        # 우측: 중앙에서 오른쪽으로 이동
+        for i in range(midpoint, width):
+            if histogram[i] > threshold:
+                rightx_current = i
+                break
+
+        if  leftx_current == rightx_current:
+            leftx_current = None
+            rightx_current = None
+            
+        
+        if  leftx_current == None:
+            leftx_current = np.argmax(histogram[:midpoint])
+        if rightx_current == None:
+            rightx_current = np.argmax(histogram[midpoint:]) + midpoint
+
+        """
+        print(leftx_current)
+        print(rightx_current)
+        """
+        """
+        central_peak = np.argmax(histogram[midpoint - 100: midpoint + 100]) + (midpoint - 100)
+        leftx_current = central_peak - (self.margin * 4)
+        rightx_current = central_peak + (self.margin * 4)
+        """
+        """
+        plt.plot(histogram)
+        plt.title("Lane pixel histogram (bottom half)")
+        plt.show()
+        """
         window_height = height // self.nwindows
         nonzero = warped_img.nonzero()
         nonzeroy = np.array(nonzero[0])
@@ -224,15 +321,20 @@ class LaneTracker:
         for window in range(self.nwindows):
             win_y_low = height - (window + 1) * window_height
             win_y_high = height - window * window_height
-
-            win_xleft_low = leftx_current - self.margin
-            win_xleft_high = leftx_current + self.margin
-            win_xright_low = rightx_current - self.margin
-            win_xright_high = rightx_current + self.margin
+            if window == 0:
+                win_xleft_low = leftx_current - self.margin * 3
+                win_xleft_high = leftx_current + self.margin * 3
+                win_xright_low = rightx_current - self.margin * 3
+                win_xright_high = rightx_current + self.margin * 3
+            else:
+                win_xleft_low = leftx_current - self.margin * 2
+                win_xleft_high = leftx_current + self.margin * 2
+                win_xright_low = rightx_current - self.margin * 2
+                win_xright_high = rightx_current + self.margin * 2
 
             if draw:
-                cv2.rectangle(out_img, (win_xleft_low, win_y_low), (win_xleft_high, win_y_high), (0,255,0), 2)
-                cv2.rectangle(out_img, (win_xright_low, win_y_low), (win_xright_high, win_y_high), (0,255,255), 2)
+                cv.rectangle(out_img, (win_xleft_low, win_y_low), (win_xleft_high, win_y_high), (0,255,0), 2)
+                cv.rectangle(out_img, (win_xright_low, win_y_low), (win_xright_high, win_y_high), (0,255,255), 2)
 
             good_left_inds = ((nonzeroy >= win_y_low) & (nonzeroy < win_y_high) &
                             (nonzerox >= win_xleft_low) & (nonzerox < win_xleft_high)).nonzero()[0]
@@ -274,17 +376,23 @@ class LaneTracker:
         out_img[lefty, leftx] = [255, 0, 0]
         out_img[righty, rightx] = [0, 0, 255]
 
-        if draw:
-            ploty = np.linspace(0, height - 1, height)
-            if left_fit is not None:
-                left_fitx = np.polyval(left_fit, ploty)
+        
+        ploty = np.linspace(0, height - 1, height)
+        if left_fit is not None:
+            left_fitx = np.polyval(left_fit, ploty)
+            if draw:
                 for i in range(len(ploty)-1):
-                    cv2.line(out_img, (int(left_fitx[i]), int(ploty[i])), (int(left_fitx[i+1]), int(ploty[i+1])), (255, 255, 0), 2)
-            if right_fit is not None:
-                right_fitx = np.polyval(right_fit, ploty)
+                    cv.line(out_img, (int(left_fitx[i]), int(ploty[i])), (int(left_fitx[i+1]), int(ploty[i+1])), (255, 255, 0), 2)
+        if right_fit is not None:
+            right_fitx = np.polyval(right_fit, ploty)
+            if draw:
                 for i in range(len(ploty)-1):
-                    cv2.line(out_img, (int(right_fitx[i]), int(ploty[i])), (int(right_fitx[i+1]), int(ploty[i+1])), (0, 255, 255), 2)
-
+                    cv.line(out_img, (int(right_fitx[i]), int(ploty[i])), (int(right_fitx[i+1]), int(ploty[i+1])), (0, 255, 255), 2)
+        if left_fit is None or right_fit is None:
+            return self.sliding_windows_visual(warped_img_ori, draw)
+        else:
+            if np.any(left_fitx >= right_fitx):
+                return self.sliding_windows_visual(warped_img_ori, draw)
         return {
             "image": out_img,
             "left": {
@@ -298,7 +406,9 @@ class LaneTracker:
                 "y": righty,
             }
         }
-
+    #위에있는 sliding window를 이용해 계산한 다항식을 기반으로 차선을 추적
+    #처음 sliding window의 다항식을 쓰고 다음부터는 이 함수 스스로 계산한 다항식을 추적
+    #속도가 빠른 대신 스스로 찾은 다항식을 추적하다보니 한번 엇나가면 복구가 힘들어 리셋 필요
     def quick_search(self, warped_img, draw):
         nonzero = warped_img.nonzero()
         nonzeroy = np.array(nonzero[0])
@@ -330,11 +440,11 @@ class LaneTracker:
             if left_fit is not None:
                 left_fitx = np.polyval(left_fit, ploty)
                 for i in range(len(ploty)-1):
-                    cv2.line(out_img, (int(left_fitx[i]), int(ploty[i])), (int(left_fitx[i+1]), int(ploty[i+1])), (0, 255, 255), 2)
+                    cv.line(out_img, (int(left_fitx[i]), int(ploty[i])), (int(left_fitx[i+1]), int(ploty[i+1])), (0, 255, 255), 2)
             if right_fit is not None:
                 right_fitx = np.polyval(right_fit, ploty)
                 for i in range(len(ploty)-1):
-                    cv2.line(out_img, (int(right_fitx[i]), int(ploty[i])), (int(right_fitx[i+1]), int(ploty[i+1])), (255, 255, 0), 2)
+                    cv.line(out_img, (int(right_fitx[i]), int(ploty[i])), (int(right_fitx[i+1]), int(ploty[i+1])), (255, 255, 0), 2)
 
         return {
             "image": out_img,
@@ -353,11 +463,11 @@ class LaneTracker:
 
     # Warp image perspective
 def warp(img, src=src, dst=dst):
-    M = cv2.getPerspectiveTransform(src, dst)
-    return cv2.warpPerspective(img, M, (img.shape[1], img.shape[0]), flags=cv2.INTER_NEAREST)
+    M = cv.getPerspectiveTransform(src, dst)
+    return cv.warpPerspective(img, M, (img.shape[1], img.shape[0]), flags=cv.INTER_NEAREST)
 
 def Re_warp(src=src, dst=dst):
-    Minv = cv2.getPerspectiveTransform(dst, src)
+    Minv = cv.getPerspectiveTransform(dst, src)
     return Minv
 
 # Crop image for region of interest
@@ -366,10 +476,10 @@ def crop(img, ROI):
     blank = np.zeros(img.shape[:2], np.uint8)
 
     # Fill region of interest
-    region_of_interest = cv2.fillPoly(blank, ROI, 255)
+    region_of_interest = cv.fillPoly(blank, ROI, 255)
 
     # Create image of interest with region (resize)
-    return cv2.bitwise_and(img, img, mask=region_of_interest)
+    return cv.bitwise_and(img, img, mask=region_of_interest)
 
 # Merge to masks
 def merge(frame, img1, img2):
@@ -384,7 +494,7 @@ def overlay(img, overlay):
 
 # Overlay two images with alpha
 def overlay_alpha(img, overlay):
-    return cv2.addWeighted(img, 1, overlay.astype(np.uint8), 0.5, 0.0)
+    return cv.addWeighted(img, 1, overlay.astype(np.uint8), 0.5, 0.0)
 
 
 def detect_dash_line_along_curve(binary_img, fit, ploty, threshold_gap=50, threshold_segment=50):
@@ -444,12 +554,10 @@ def draw_lane_curve(binary_img, fit, ploty, line_type):
         pt1 = (x_vals[i], int(ploty[i]))
         pt2 = (x_vals[i+1], int(ploty[i+1]))
         if 0 <= pt1[0] < binary_img.shape[1] and 0 <= pt2[0] < binary_img.shape[1]:
-            cv2.line(curve_img, pt1, pt2, color, 3)
+            cv.line(curve_img, pt1, pt2, color, 3)
     return curve_img
 
 
-import cv2
-import numpy as np
 def blend_transparent_overlay(base_img, overlay_mask, color=(0, 255, 255), alpha=0.4):
     """
     base_img: 원본 BGR 이미지
@@ -459,8 +567,8 @@ def blend_transparent_overlay(base_img, overlay_mask, color=(0, 255, 255), alpha
     """
     overlay = np.zeros_like(base_img, dtype=np.uint8)
     overlay[:] = color
-    mask_3ch = cv2.merge([overlay_mask] * 3)
-    blended = cv2.addWeighted(base_img, 1, cv2.bitwise_and(overlay, mask_3ch), alpha, 0)
+    mask_3ch = cv.merge([overlay_mask] * 3)
+    blended = cv.addWeighted(base_img, 1, cv.bitwise_and(overlay, mask_3ch), alpha, 0)
     return blended
 
 def draw_lane_area_with_labels(original_img, left_fit, right_fit, warped_shape, Minv,
@@ -472,12 +580,12 @@ def draw_lane_area_with_labels(original_img, left_fit, right_fit, warped_shape, 
     if left_fit is not None:
         left_fitx = np.polyval(left_fit, ploty)
         left_pts = np.array([[left_fitx[i], ploty[i]] for i in range(len(ploty))], dtype=np.float32).reshape(-1, 1, 2)
-        left_unwarped = cv2.perspectiveTransform(left_pts, Minv)
+        left_unwarped = cv.perspectiveTransform(left_pts, Minv)
 
     if right_fit is not None:
         right_fitx = np.polyval(right_fit, ploty)
         right_pts = np.array([[right_fitx[i], ploty[i]] for i in range(len(ploty))], dtype=np.float32).reshape(-1, 1, 2)
-        right_unwarped = cv2.perspectiveTransform(right_pts, Minv)
+        right_unwarped = cv.perspectiveTransform(right_pts, Minv)
 
     # 역투영
     
@@ -491,10 +599,10 @@ def draw_lane_area_with_labels(original_img, left_fit, right_fit, warped_shape, 
 
     if left_fit is not None and right_fit is not None:
         lane_poly = np.vstack((left_unwarped, np.flipud(right_unwarped)))
-    #cv2.fillPoly(result, [np.int32(lane_poly)], fill_color)
+    #cv.fillPoly(result, [np.int32(lane_poly)], fill_color)
 
         lane_mask = np.zeros(original_img.shape[:2], dtype=np.uint8)
-        cv2.fillPoly(lane_mask, [np.int32(lane_poly)], 255)
+        cv.fillPoly(lane_mask, [np.int32(lane_poly)], 255)
         result = blend_transparent_overlay(original_img, lane_mask, color=fill_color, alpha=0.4)
 
         # 좌우 선 그리기
@@ -504,8 +612,8 @@ def draw_lane_area_with_labels(original_img, left_fit, right_fit, warped_shape, 
             pt1_r = tuple(np.int32(right_unwarped[i][0]))
             pt2_r = tuple(np.int32(right_unwarped[i + 1][0]))
 
-            cv2.line(result, pt1_l, pt2_l, left_color, 3)
-            cv2.line(result, pt1_r, pt2_r, right_color, 3)
+            cv.line(result, pt1_l, pt2_l, left_color, 3)
+            cv.line(result, pt1_r, pt2_r, right_color, 3)
 
     # 박스 그리기: 좌우 차선 경계 사각형
         def draw_label_box(unwarped_pts, color, label):
@@ -513,9 +621,9 @@ def draw_lane_area_with_labels(original_img, left_fit, right_fit, warped_shape, 
             ys = [pt[0][1] for pt in unwarped_pts]
             x_min, x_max = int(min(xs)), int(max(xs))
             y_min, y_max = int(min(ys)), int(max(ys))
-            cv2.rectangle(result, (x_min, y_min), (x_max, y_max), color, 2)
-            cv2.putText(result, label, (x_min, y_min - 10),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2, cv2.LINE_AA)
+            cv.rectangle(result, (x_min, y_min), (x_max, y_max), color, 2)
+            cv.putText(result, label, (x_min, y_min - 10),
+                        cv.FONT_HERSHEY_SIMPLEX, 0.8, color, 2, cv.LINE_AA)
 
     # 박스 + 라벨 추가
         draw_label_box(left_unwarped, left_color, f"Left: {left_type}")
@@ -524,17 +632,28 @@ def draw_lane_area_with_labels(original_img, left_fit, right_fit, warped_shape, 
     return result
 
 
-def clash(img):
+def clahe(img):
 
-    lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
-    l, a, b = cv2.split(lab)
-    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+    lab = cv.cvtColor(img, cv.COLOR_BGR2LAB)
+    l, a, b = cv.split(lab)
+    clahe = cv.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
     l_clahe = clahe.apply(l)
-    lab_clahe = cv2.merge((l_clahe, a, b))
-    img_clahe = cv2.cvtColor(lab_clahe, cv2.COLOR_LAB2BGR)
+    lab_clahe = cv.merge((l_clahe, a, b))
+    img_clahe = cv.cvtColor(lab_clahe, cv.COLOR_LAB2BGR)
 
     return img_clahe
 
+
+def hls_clahe(img):
+    hls = cv.cvtColor(img, cv.COLOR_BGR2HLS)
+    h, l, s = cv.split(hls)
+
+    clahe = cv.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    l_eq = clahe.apply(l)
+
+    hls_eq = cv.merge((h, l_eq, s))
+    img_clahe = cv.cvtColor(hls_eq, cv.COLOR_HLS2BGR)
+    return img_clahe
 
 
 def line_check(frame, src, dst, LT):
@@ -549,30 +668,25 @@ def line_check(frame, src, dst, LT):
     yellow_upper = np.array([35, 255, 255])
 
 
-    hsv = cv2.cvtColor(orig, cv2.COLOR_BGR2HSV)
+    hsv = cv.cvtColor(orig, cv.COLOR_BGR2HSV)
 
-    white_mask = cv2.inRange(hsv, white_lower, white_upper)
-    yellow_mask = cv2.inRange(hsv, yellow_lower, yellow_upper)
+    white_mask = cv.inRange(hsv, white_lower, white_upper)
+    yellow_mask = cv.inRange(hsv, yellow_lower, yellow_upper)
 
-    lane_mask = cv2.bitwise_or(white_mask, yellow_mask)
+    lane_mask = cv.bitwise_or(white_mask, yellow_mask)
 
-    h, s, v = cv2.split(hsv)
-    #v = cv2.add(v, -100)  # 밝기 증가 (0~255 클램핑됨)
-    s = cv2.add(s, -50)  # 밝기 증가 (0~255 클램핑됨)
-    final_hsv = cv2.merge((h, s, v))
+    h, s, v = cv.split(hsv)
+    #v = cv.add(v, -100)  # 밝기 증가 (0~255 클램핑됨)
+    s = cv.add(s, -50)  # 밝기 증가 (0~255 클램핑됨)
+    final_hsv = cv.merge((h, s, v))
 
-    masked = cv2.bitwise_and(img, img, mask=lane_mask)
+    masked = cv.bitwise_and(img, img, mask=lane_mask)
     """
 
-    img_clahe = clash(orig)
-
-    hsv = cv2.cvtColor(orig, cv2.COLOR_BGR2HSV)
-    v = hsv[:, :, 2]
-    _, shadow_mask = cv2.threshold(v, 60, 255, cv2.THRESH_BINARY)
-
+    img_clahe = hls_clahe(orig)
 
     color = color_space(img_clahe)
-    _, binary_result = cv2.threshold(color, 150, 255, cv2.THRESH_BINARY)
+    _, binary_result = cv.threshold(color, 150, 255, cv.THRESH_BINARY)
 
 
 
@@ -593,18 +707,18 @@ def line_check(frame, src, dst, LT):
 
     lower_red = np.array([0, 0, 200])
     upper_red = np.array([50, 50, 255])
-    mask_red = cv2.inRange(result["image"], lower_red, upper_red)
+    mask_red = cv.inRange(result["image"], lower_red, upper_red)
 
     # 파란색 마스크
     lower_blue = np.array([200, 0, 0])
     upper_blue = np.array([255, 50, 50])
-    mask_blue = cv2.inRange(result["image"], lower_blue, upper_blue)
+    mask_blue = cv.inRange(result["image"], lower_blue, upper_blue)
 
     # 두 마스크 합치기
-    mask_combined = cv2.bitwise_or(mask_red, mask_blue)
+    mask_combined = cv.bitwise_or(mask_red, mask_blue)
 
     # 마스크 결과를 흑백 형태로 출력 (255: 흰색, 나머지: 검정)
-    output = cv2.cvtColor(mask_combined, cv2.COLOR_GRAY2BGR)  # 필요 시 RGB 이미지로 변환
+    output = cv.cvtColor(mask_combined, cv.COLOR_GRAY2BGR)  # 필요 시 RGB 이미지로 변환
 
 
     ploty = np.linspace(0, result["image"].shape[0] - 1, num=result["image"].shape[0])
@@ -623,23 +737,23 @@ def line_check(frame, src, dst, LT):
         right_line_type = "unknown"
 
     if result["left"]["fit"] is not None:
-        overlay = cv2.addWeighted(output, 1.0, left_lane_img, 0.8, 0)
+        overlay = cv.addWeighted(output, 1.0, left_lane_img, 0.8, 0)
         #gap_draw_left = draw_gap_markers(mask_combined, result["left"]["fit"], ploty)
     if result["right"]["fit"] is not None:
-        overlay = cv2.addWeighted(output, 1.0, right_lane_img, 0.8, 0)
+        overlay = cv.addWeighted(output, 1.0, right_lane_img, 0.8, 0)
 
         #gap_draw_right = draw_gap_markers(mask_combined, result["right"]["fit"], ploty)
 
         if result["left"]["fit"] is not None:
             pass
-            #gap_draw = cv2.bitwise_or(gap_draw_left, gap_draw_right)
+            #gap_draw = cv.bitwise_or(gap_draw_left, gap_draw_right)
             #return gap_draw
 
     # When everything done, release the video capture object
 
     Minv = Re_warp(src, dst)
     result = draw_lane_area_with_labels(
-        #original_img=cv2.cvtColor(orig, cv2.COLOR_BGR2RGB),
+        #original_img=cv.cvtColor(orig, cv.COLOR_BGR2RGB),
         original_img=orig,
         left_fit=result["left"]["fit"],
         right_fit=result["right"]["fit"],
@@ -662,7 +776,7 @@ def line_check(frame, src, dst, LT):
 #video_file = 'project'
 
 def example():
-    cap = cv2.VideoCapture('harder_challenge_video.mp4')
+    cap = cv.VideoCapture('harder_challenge_video.mp4')
 
     LT = LaneTracker(margin=50)
     #img = cv.imread('lane.jpg')
@@ -699,16 +813,16 @@ def example():
             break
         frame = line_check(frame, src, dst, LT)
 
-        cv2.imshow('Frame', frame)
+        cv.imshow('Frame', frame)
 
         if ret == True:   
-            if cv2.waitKey(25) & 0xFF == ord('q'):
+            if cv.waitKey(25) & 0xFF == ord('q'):
                 break
         else:
             break
 
     # When everything done, release the video capture object
     cap.release()
-    cv2.destroyAllWindows()
+    cv.destroyAllWindows()
 if __name__ == "__main__":
     example()
