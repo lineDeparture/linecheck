@@ -29,6 +29,40 @@ def color_space(img):
     return cv.cvtColor(cv.bitwise_and(img, img, mask=masks), cv.COLOR_BGR2GRAY)
 
 
+def color_space_hls(img):
+    # Convert image to HSV
+    img_hls = cv.cvtColor(img, cv.COLOR_BGR2HLS)
+    # Colorspace "yellow" in HSV: (15-40, 80-255, 160-255)
+    mask_yellow = cv.inRange(img_hls, (20, 0, 0), (27, 255, 255))
+    # Colorspace "white" in HSV: (0-255, 0-20, 200-255)
+    mask_white = cv.inRange(img_hls, (0, 0, 200), (180, 255, 255))
+
+
+
+
+    hsv = cv.cvtColor(img, cv.COLOR_BGR2HSV)
+
+    # 초록색 제거용 마스크 (선택 사항)
+    lower_green = np.array([35, 50, 50])
+    upper_green = np.array([85, 255, 255])
+    green_mask = cv.inRange(hsv, lower_green, upper_green)
+
+
+    # 노랑에서 초록 제거
+    yellow_clean = cv.bitwise_and(mask_yellow, cv.bitwise_not(green_mask))
+
+    yellow_clean_masks = cv.bitwise_and(mask_yellow, yellow_clean)
+
+    # Merge white and yellow masks
+    masks = cv.bitwise_or(yellow_clean_masks, mask_white)
+    # Return image in gray
+
+    #cv.imshow('hls', cv.cvtColor(cv.bitwise_and(img, img, mask=masks), cv.COLOR_HLS2BGR))
+    #cv.imshow('hls', cv.bitwise_and(img, img, mask=masks))
+    
+    return cv.cvtColor(cv.bitwise_and(img, img, mask=masks), cv.COLOR_BGR2GRAY)
+
+
 import numpy as np
 import cv2
 
@@ -656,6 +690,20 @@ def hls_clahe(img):
     return img_clahe
 
 
+def get_region_brightness(image, x_ratio=0.5, y_ratio=0.6, region_size=0.2):
+    height, width = image.shape[:2]
+    x_start = int(width * (x_ratio - region_size / 2))
+    x_end = int(width * (x_ratio + region_size / 2))
+    y_start = int(height * y_ratio)
+    y_end = int(height * (y_ratio + region_size))
+
+    region = image[y_start:y_end, x_start:x_end]
+
+
+    brightness = np.mean(region)
+    return brightness
+
+
 def line_check(frame, src, dst, LT):
     orig = frame.copy()
 
@@ -685,9 +733,13 @@ def line_check(frame, src, dst, LT):
 
     img_clahe = hls_clahe(orig)
 
-    color = color_space(img_clahe)
-    _, binary_result = cv.threshold(color, 150, 255, cv.THRESH_BINARY)
+    color = color_space_hls(img_clahe)
 
+    brightness = get_region_brightness(img_clahe)
+
+    threshold_val = int(np.clip(brightness * 1.2, 80, 240))
+
+    _, binary_result = cv.threshold(color, threshold_val, 255, cv.THRESH_BINARY)
 
 
     #return cv.bitwise_and(binary_result, binary_result, mask=shadow_mask)
