@@ -727,9 +727,11 @@ def combined_threshold(img):
     sxbinary = np.zeros_like(scaled_sobel)
     sxbinary[(scaled_sobel >= thresh_min) & (scaled_sobel <= thresh_max)] = 1
 
+    """
     combined_binary = np.zeros_like(sxbinary)
     combined_binary[(sxbinary == 1)] = 255
-    #cv.imshow('sxbinary', combined_binary)
+    cv.imshow('sxbinary', combined_binary)
+    """
     # 색상 임계값
     hls = cv.cvtColor(img, cv.COLOR_BGR2HLS)
     s_channel = hls[:, :, 2]
@@ -737,10 +739,11 @@ def combined_threshold(img):
     s_thresh_max = 255
     s_binary = np.zeros_like(s_channel)
     s_binary[(s_channel >= s_thresh_min) & (s_channel <= s_thresh_max)] = 1
-
+    """
     combined_binary = np.zeros_like(s_binary)
     combined_binary[(s_binary == 1)] = 255
     cv.imshow('s_binary', combined_binary)
+    """
     # 결합
     combined_binary = np.zeros_like(sxbinary)
     combined_binary[(sxbinary == 1) | (s_binary == 1)] = 255
@@ -781,9 +784,10 @@ def line_check(frame, src, dst, LT):
     sobel_test = combined_threshold(blurred)
 
     binary_result = open_img(sobel_test, 1)
-
+    """
     cv.imshow('sobel_test', sobel_test)
     cv.imshow('binary_result', binary_result)
+    """
     #return cv.bitwise_and(binary_result, binary_result, mask=shadow_mask)
     color = warp(binary_result, src, dst)
 
