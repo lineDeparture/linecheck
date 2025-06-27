@@ -870,7 +870,7 @@ def line_check(frame, src, dst, LT):
 #video_file = 'project'
 
 def example():
-    cap = cv.VideoCapture('challenge_video.mp4')
+    cap = cv.VideoCapture(r'C:\Users\USER\Documents\lanedetection1\linecheck\harder_challenge_video.mp4')
     #cap = cv.VideoCapture('police.mp4')
 
     LT = LaneTracker(margin=50)

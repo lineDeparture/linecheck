@@ -828,7 +828,7 @@ def line_check(frame, src, dst, LT):
 #video_file = 'project'
 
 def example():
-    cap = cv.VideoCapture('harder_challenge_video.mp4')
+    cap = cv.VideoCapture('project_video.mp4')
 
     LT = LaneTracker(margin=50)
     #img = cv.imread('lane.jpg')
