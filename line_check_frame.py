@@ -34,9 +34,9 @@ def color_space_hls(img):
     # Convert image to HSV
     img_hls = cv.cvtColor(img, cv.COLOR_BGR2HLS)
     # Colorspace "yellow" in HSV: (15-40, 80-255, 160-255)
-    mask_yellow = cv.inRange(img_hls, (20, 0, 0), (27, 255, 255))
+    mask_yellow = cv.inRange(img_hls, (15, 100, 0), (25, 150, 255))
     # Colorspace "white" in HSV: (0-255, 0-20, 200-255)
-    mask_white = cv.inRange(img_hls, (0, 0, 200), (180, 255, 255))
+    mask_white = cv.inRange(img_hls, (0, 200, 0), (180, 255, 255))
 
 
 
@@ -58,8 +58,8 @@ def color_space_hls(img):
     masks = cv.bitwise_or(yellow_clean_masks, mask_white)
     # Return image in gray
 
-    #cv.imshow('hls', cv.cvtColor(cv.bitwise_and(img, img, mask=masks), cv.COLOR_HLS2BGR))
-    #cv.imshow('hls', cv.bitwise_and(img, img, mask=masks))
+    cv.imshow('hls', cv.cvtColor(cv.bitwise_and(img, img, mask=masks), cv.COLOR_HLS2BGR))
+    cv.imshow('hls', cv.bitwise_and(img, img, mask=masks))
     
     return cv.cvtColor(cv.bitwise_and(img, img, mask=masks), cv.COLOR_BGR2GRAY)
 
@@ -109,9 +109,6 @@ class LaneTracker:
 
         #diff = np.abs(left_curve - right_curve)
 
-
-        curvature_ratio = max(left_curve, right_curve) / min(left_curve, right_curve)
-        curvature_diff = abs(left_curve - right_curve)
         if abs(left_fit[0] - right_fit[0]) > 5.0e-03:
             return True
         
@@ -120,7 +117,13 @@ class LaneTracker:
         if np.any(left_fitx >= right_fitx):
 
             return True
+        
+        width = warped_img.shape[1]
 
+        bottom_half_left_fitx = left_fitx[(warped_img.shape[0] // 2):]
+        bottom_half_right_fitx = right_fitx[(warped_img.shape[0] // 2):]
+        if np.all(bottom_half_left_fitx > width // 2) or np.all(bottom_half_right_fitx < width // 2):
+            return True
         # 2. 거리 기반 판단
         #영상별로 차선간 거리가 달라져서 쓰기에는 힘들것으로 보임
         """
@@ -134,7 +137,7 @@ class LaneTracker:
         # if abs(left_curv - right_curv) > threshold:
         #     return True
 
-
+    
     def remove_outliers(self, x, y, fit, threshold=30):
         residuals = np.abs(np.polyval(fit, y) - x)
         mask = residuals < threshold
@@ -636,7 +639,7 @@ def detect_dash_line_along_curve(binary_img, fit, ploty, threshold_gap=50, thres
     print("segment 개수:", len(segments))
     """
     # 판단 조건
-    if len(gaps) > 2 and np.mean(gaps) > threshold_gap and len(segments) >= 2:
+    if len(gaps) >= 2 and np.mean(gaps) > threshold_gap and len(segments) >= 2:
         return "dashed"
     else:
         return "solid"
@@ -810,14 +813,14 @@ def line_check(frame, M, Minv, LT):
     ploty = np.linspace(0, result["image"].shape[0] - 1, num=result["image"].shape[0])
     if result["left"]["fit"] is not None:
         left_line_type = detect_dash_line_along_curve(mask_combined, result["left"]["fit"], ploty)
-        left_lane_img = draw_lane_curve(mask_combined, result["left"]["fit"], ploty, left_line_type)
+        #left_lane_img = draw_lane_curve(mask_combined, result["left"]["fit"], ploty, left_line_type)
     else:
         left_line_type = "unknown"
 
     
     if result["right"]["fit"] is not None:
         right_line_type = detect_dash_line_along_curve(mask_combined, result["right"]["fit"], ploty)
-        right_lane_img = draw_lane_curve(mask_combined, result["right"]["fit"], ploty, right_line_type)
+        #right_lane_img = draw_lane_curve(mask_combined, result["right"]["fit"], ploty, right_line_type)
     else:
         right_line_type = "unknown"
         
@@ -850,25 +853,30 @@ def combined_threshold(img):
     sxbinary = np.zeros_like(scaled_sobel)
     sxbinary[(scaled_sobel >= thresh_min) & (scaled_sobel <= thresh_max)] = 1
 
-    """
+    
     combined_binary = np.zeros_like(sxbinary)
     combined_binary[(sxbinary == 1)] = 255
     cv.imshow('sxbinary', combined_binary)
-    """
+    
     # 색상 임계값
     hls = cv.cvtColor(img, cv.COLOR_BGR2HLS)
+
     s_channel = hls[:, :, 2]
-    s_thresh_min = 90
-    s_thresh_max = 255
+    s_thresh_min = 100
+    s_thresh_max = 150
     s_binary = np.zeros_like(s_channel)
     s_binary[(s_channel >= s_thresh_min) & (s_channel <= s_thresh_max)] = 1
-    """
+
+
+
     combined_binary = np.zeros_like(s_binary)
-    combined_binary[(s_binary == 1)] = 255
+    combined_binary[s_binary == 1] = 255
     cv.imshow('s_binary', combined_binary)
-    """
+
+    
+    
     # 결합
-    combined_binary = np.zeros_like(sxbinary)
+    combined_binary = np.zeros_like(s_binary)
     combined_binary[(sxbinary == 1) | (s_binary == 1)] = 255
     return combined_binary
 
@@ -888,6 +896,8 @@ def line_check_sobel(frame, M, Minv, LT):
     """
 
     sobel_test = combined_threshold(orig)
+
+    cv.imshow('sobel_test', sobel_test)
 
     binary_result = open_img(sobel_test, 1)
 
@@ -919,16 +929,18 @@ def line_check_sobel(frame, M, Minv, LT):
     ploty = np.linspace(0, result["image"].shape[0] - 1, num=result["image"].shape[0])
     if result["left"]["fit"] is not None:
         left_line_type = detect_dash_line_along_curve(mask_combined, result["left"]["fit"], ploty)
-        left_lane_img = draw_lane_curve(mask_combined, result["left"]["fit"], ploty, left_line_type)
+        #left_lane_img = draw_lane_curve(mask_combined, result["left"]["fit"], ploty, left_line_type)
     else:
         left_line_type = "unknown"
 
     
     if result["right"]["fit"] is not None:
         right_line_type = detect_dash_line_along_curve(mask_combined, result["right"]["fit"], ploty)
-        right_lane_img = draw_lane_curve(mask_combined, result["right"]["fit"], ploty, right_line_type)
+        #right_lane_img = draw_lane_curve(mask_combined, result["right"]["fit"], ploty, right_line_type)
     else:
         right_line_type = "unknown"
+
+    
 
     result = draw_lane_area_with_labels(
         #original_img=cv.cvtColor(orig, cv.COLOR_BGR2RGB),
@@ -952,8 +964,11 @@ def line_check_sobel(frame, M, Minv, LT):
 #여기서부터 주요 예시
 #video_file = 'project'
 
+RESIZE_WIDTH = 1280
+RESIZE_HEIGHT = 720
+
 def example():
-    cap = cv.VideoCapture('harder_challenge_video.mp4')
+    cap = cv.VideoCapture("cctv/REC_20250703_123827_1.avi")
 
     LT = LaneTracker(margin=50)
     #img = cv.imread('lane.jpg')
@@ -968,10 +983,15 @@ def example():
     ret, frame = cap.read()
 
     # If challenge video is played -> Define different points for transformation 
+    frame = cv2.resize(frame, (RESIZE_WIDTH, RESIZE_HEIGHT))
+    ori_height, ori_width = frame.shape[:2]
+
+    #frame = cv2.resize(frame, (int(ori_width * 0.5), int(ori_height *0.5)))
+    
     height, width = frame.shape[:2]
     src = np.float32([
-        [width * 0.45, height * 0.65],
-        [width * 0.55, height * 0.65],
+        [width * 0.45, height * 0.57],
+        [width * 0.55, height * 0.57],
         [width * 0.9, height],
         [width * 0.1, height]
     ])
@@ -993,7 +1013,11 @@ def example():
         ret, frame = cap.read()
         if (frame is None):
             break
-        frame = line_check_sobel(frame, M, Minv, LT)
+        frame = cv2.resize(frame, (RESIZE_WIDTH, RESIZE_HEIGHT))
+        #frame = cv2.resize(frame, (int(ori_width * 0.5), int(ori_height *0.5)))
+        
+        #frame = line_check_sobel(frame, M, Minv, LT)
+        frame = line_check(frame, M, Minv, LT)
 
         curr_time = time.time()
         fps = 1.0 / (curr_time - prev_time) if prev_time else 0
